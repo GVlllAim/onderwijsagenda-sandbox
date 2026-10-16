@@ -1,0 +1,16 @@
+# clasp-inloggegevens (nooit committen). .clasp.json (alleen het scriptId) mag wel mee.
+.clasprc.json
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Systeem
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Nooit committen: geheimen en exports met persoonsgegevens
+*.env
+.env*
+exports/

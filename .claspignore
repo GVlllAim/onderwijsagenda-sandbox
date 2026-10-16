@@ -1,0 +1,9 @@
+# Alleen code die in Apps Script hoort, gaat mee met clasp push.
+# _tests/ (Node-testcode) en _docs/ mogen NOOIT naar Apps Script (KWALITEITSREGELS §8).
+**/**
+!appsscript.json
+!*.js
+!*.html
+_tests/**
+_docs/**
+node_modules/**
