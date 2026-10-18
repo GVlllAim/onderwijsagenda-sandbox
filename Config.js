@@ -33,6 +33,10 @@ var CONFIG_LATER_VERPLICHT = ['BRON_DOCENTENBEHEER_ID', 'REGISTRATIE_ID'];
 var CONFIG_ALLE_OPLEIDINGEN = 'ALLE';                  // PB-8: ALLE = alle opleidingen; leeg is NIET hetzelfde als ALLE
 var CONFIG_VERWACHTE_TIJDZONE = 'America/Paramaribo';  // KWALITEITSREGELS §8
 
+// Verplichtingen (T001b)
+var CONFIG_TYPE_VAK = 'OET-006';        // B07: alleen onderwijseenheden van het type Vak krijgen een onderwijsagenda
+var CONFIG_SLEUTEL_SCHEIDING = '|';     // PB-12: scheidingsteken in de natuurlijke sleutel van een verplichting
+
 // Ernst van een signalering (PB-3: vast formaat type, ernst, sleutel, bronregel, tekst).
 var SIGNALERING_ERNST = { FOUT: 'fout', WAARSCHUWING: 'waarschuwing', INFO: 'info' };
 

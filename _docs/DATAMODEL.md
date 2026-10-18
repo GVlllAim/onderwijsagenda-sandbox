@@ -1,6 +1,6 @@
 # DATAMODEL: Onderwijsagenda-app
 
-*Versie T001a, 15-10-2026. Wordt bijgewerkt bij elke schemawijziging.*
+*Versie T001b, 16-10-2026. Wordt bijgewerkt bij elke schemawijziging.*
 
 Dit document zegt welke tabellen en kolommen de app gebruikt, wie eigenaar is, en in welk formaat gegevens staan of geschreven worden.
 De feiten over de bron zijn gecontroleerd op de PO-kopie `gs_basedata v2.xlsx` (Drive-map "Codebase Skooro 20261014", 14-10-2026). Jouw sandbox-kopie kan afwijken: draai `controleerBronBasedata()` en vergelijk.
@@ -72,7 +72,7 @@ Het contract staat in code als `BRON_BASEDATA_CONTRACT` (`Bron_Lezen.js`). Allee
 
 ### Notatie in de bron (waarom er genormaliseerd wordt)
 
-- ID's staan als `PREFIX-nummer` in hoofdletters (`KLA-001`, `LPK-043`). Oudere ID's in andere bronnen (`ls_001`, `doc_001`) volgen we niet.
+- ID's staan als `PREFIX-nummer` in hoofdletters (`LPK-043`, `TRI-025`, `OE-001`). Klas-ID's in de PO-kopie hebben de vorm `KLA-<jaar>-<klascode>`, bijvoorbeeld `KLA-ACJ-007-PT1.06.01`. Oudere ID's in andere bronnen (`ls_001`, `doc_001`) volgen we niet.
 - `academischjaar_code` is tekst (`'2025'`) bij oudere jaren en een getal (`2026`) bij ACJ-007. De leeslaag maakt er altijd tekst van.
 - `is_active` en `vakken_compleet_bevestigd` zijn getallen (`1`/`0`) of leeg. `curriculum.verzorgd` is `JA`, `NEE` of leeg; vertaling volgt in T001b (`JA`/`1`/`TRUE` = ja; `NEE`/`0`/`FALSE`/leeg = nee).
 - De sheets hebben lege rijen en extra lege kolommen onderaan en rechts. De leeslaag slaat lege rijen over en negeert lege kopcellen.
@@ -104,5 +104,55 @@ Kolommen, in volgorde:
 `verplichting_id`, `sleutel`, `academischjaar_id`, `trimester_id`, `opleiding_id`, `onderwijs_eenheid_id`, `klas_id`, `lespakket_id`, `status`, `aangemaakt_op`, `aangemaakt_door`, `bijgewerkt_op`, `bijgewerkt_door`
 
 - ID-formaat: `VPL-0001`, `VPL-0002`, ... via een centrale functie (PB-4).
-- Geen dubbele verplichtingen via de natuurlijke sleutel (jaar + trimester + opleiding + vak + klas), niet via het ID.
+- Geen dubbele verplichtingen via de natuurlijke sleutel (jaar + trimester + opleiding + vak + klas), niet via het ID. Notatie van de sleutel (PB-12): de delen in die volgorde, gescheiden door `|`, bijvoorbeeld `ACJ-007|TRI-025|OPL-001|OE-001|KLA-ACJ-007-PT1.06.01`.
 - Statusnamen staan als constanten op één plek. De eerste status is `Verwacht`; de overgangsmatrix volgt in een latere taak.
+
+## 6. Afleiden van verwachte agenda's (T001b, `Verplichtingen_Afleiden.js`)
+
+Dit onderdeel leest en schrijft niets. Het krijgt de gelezen basedata en de selectie uit Script Properties (`GENEREER_ACADEMISCHJAAR_ID`, `GENEREER_OPLEIDING_ID` = opleiding-ID of `ALLE`) en geeft `{ verplichtingen, signaleringen, samenvatting }`. Dezelfde invoer geeft altijd dezelfde uitvoer in dezelfde volgorde (opleiding, klas, trimester, vak).
+
+### Regels
+
+1. Klassen van het gekozen jaar (`klassen.academischjaar_id`) horen via `lespakket_id` bij een lespakket en dus bij een opleiding.
+2. Het jaar via lespakket en leerjaar moet gelijk zijn aan het jaar van de klas. Anders: fout, geen verplichtingen voor die klas (B09).
+3. Voor elk lespakket met minstens één geldige klas, één keer: curriculumregels controleren.
+   - Trimester moet bestaan, bij het gekozen jaar horen en bij dezelfde opleiding als het lespakket horen. Anders: fout, regel telt niet mee.
+   - Onderwijseenheid moet bestaan en het type `OET-006` (Vak) hebben (B07). Andere typen worden alleen geteld.
+   - `verzorgd`: `JA`, `1`, `TRUE` = ja. `NEE`, `0`, `FALSE` = nee (alleen geteld). Leeg = niet verzorgd, wel melden per lespakket. Andere waarden: waarschuwing, telt niet mee.
+   - Periode: `curriculum.periode_id` vergelijken met de periode uit `trimester_perioden` voor trimester en leerjaar. Bij afwijking: waarschuwing, het trimester wint en de verplichting blijft (B09).
+   - Dubbele regel (zelfde lespakket, trimester en vak): fout, de tweede telt niet mee.
+4. Per geldige klas van het lespakket ontstaat één verplichting per geldige curriculumregel.
+5. Een opleiding in de selectie zonder klassen in het jaar geeft een waarschuwing (PB-10). Bij `ALLE` zijn dat alle rijen in `opleidingen`.
+6. `curriculum.is_open` wordt genegeerd (B15). De docent speelt geen rol (B06).
+
+### Signaleringen van deze stap
+
+| Type | Ernst | Betekenis |
+|---|---|---|
+| `KLAS_ZONDER_LESPAKKET` | fout | klas verwijst naar een onbekend of leeg lespakket |
+| `OPLEIDING_ONBEKEND` | fout | lespakket verwijst naar een onbekende opleiding |
+| `KLAS_JAAR_CONFLICT` | fout | jaar van de klas is niet gelijk aan het jaar via lespakket en leerjaar |
+| `TRIMESTER_ONBEKEND` | fout | curriculumregel verwijst naar een onbekend trimester |
+| `TRIMESTER_JAAR_CONFLICT` | fout | trimester hoort bij een ander jaar dan het gekozen jaar |
+| `OPLEIDING_CONFLICT` | fout | trimester hoort bij een andere opleiding dan het lespakket |
+| `OE_ONBEKEND` | fout | curriculumregel verwijst naar een onbekende onderwijseenheid |
+| `DUBBELE_SLEUTEL` | fout | dubbele curriculumregel of dubbele verplichting |
+| `LESPAKKET_NIET_COMPLEET` | waarschuwing | `vakken_compleet_bevestigd` is niet ja (één melding per lespakket) |
+| `LESPAKKET_ZONDER_CURRICULUM` | waarschuwing | lespakket heeft geen curriculumregels |
+| `VERZORGD_LEEG` | waarschuwing | aantal Vak-regels met een lege `verzorgd` (één melding per lespakket) |
+| `VERZORGD_ONBEKEND` | waarschuwing | `verzorgd` heeft een niet-herkende waarde |
+| `PERIODE_AFWIJKEND` | waarschuwing | `periode_id` komt niet overeen met de afgeleide periode |
+| `OPLEIDING_ZONDER_KLASSEN` | waarschuwing | opleiding in de selectie heeft geen klassen in het jaar |
+
+Bewust uitgesloten regels (geen Vak, `verzorgd` = nee) geven geen signalering; ze staan als telling in de samenvatting (PB-11). De tellingen zijn per klas-regelcombinatie.
+
+### Controlegetallen op de PO-kopie (ACJ-007, `ALLE`, 16-10-2026)
+
+| Opleiding | Klassen | Verplichtingen | Geen Vak | Verzorgd nee |
+|---|---|---|---|---|
+| OPL-001 | 8 | 255 | 46 | 7 |
+| OPL-002 | 4 | 147 | 22 | 9 |
+| OPL-003 | 16 | 667 | 0 | 0 |
+| Totaal | 28 | 1069 | 68 | 16 |
+
+Signaleringen: 7 maal `LESPAKKET_NIET_COMPLEET` (LPK-049 en LPK-053 t/m LPK-058). Geen fouten.
