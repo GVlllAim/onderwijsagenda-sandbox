@@ -37,6 +37,19 @@ var CONFIG_VERWACHTE_TIJDZONE = 'America/Paramaribo';  // KWALITEITSREGELS §8
 var CONFIG_TYPE_VAK = 'OET-006';        // B07: alleen onderwijseenheden van het type Vak krijgen een onderwijsagenda
 var CONFIG_SLEUTEL_SCHEIDING = '|';     // PB-12: scheidingsteken in de natuurlijke sleutel van een verplichting
 
+// Registratie (T001c), tabblad verplichtingen: kolomcontract in volgorde (PB-13, besluit B11)
+var REGISTRATIE_TAB_VERPLICHTINGEN = 'verplichtingen';
+var REGISTRATIE_KOLOMMEN_VERPLICHTINGEN = [
+  'verplichting_id', 'sleutel', 'academischjaar_id', 'trimester_id', 'opleiding_id', 'onderwijs_eenheid_id',
+  'klas_id', 'lespakket_id', 'status', 'aangemaakt_op', 'aangemaakt_door', 'bijgewerkt_op', 'bijgewerkt_door'
+];
+var VERPLICHTING_STATUS = { VERWACHT: 'Verwacht' };    // eerste status; de overgangsmatrix volgt in een latere taak
+var VERPLICHTING_ID_PREFIX = 'VPL';                    // PB-4 / B10: VPL-0001
+var VERPLICHTING_ID_MIN_CIJFERS = 4;                   // minimaal 4 cijfers; groeit mee na VPL-9999
+var REGISTRATIE_DATUMTIJD_PATROON = 'yyyy-MM-dd HH:mm:ss';   // PB-13: tekst, tijdzone Paramaribo
+var REGISTRATIE_CHUNK_GROOTTE = 200;                   // aantal nieuwe rijen per schrijfactie
+var REGISTRATIE_LOCK_WACHTTIJD_MS = 30000;             // hoe lang gewacht wordt op de lock (30 seconden)
+
 // Ernst van een signalering (PB-3: vast formaat type, ernst, sleutel, bronregel, tekst).
 var SIGNALERING_ERNST = { FOUT: 'fout', WAARSCHUWING: 'waarschuwing', INFO: 'info' };
 
@@ -59,6 +72,19 @@ function config_get_(sleutel) {
       'Zet hem in Apps Script bij Projectinstellingen > Scripteigenschappen.');
   }
   return waarde;
+}
+
+/**
+ * Geeft de waarde van een bekende instelling, of '' als hij ontbreekt. Gooit GEEN fout.
+ * ALLEEN voor veiligheidscontroles (bijvoorbeeld: wijst de registratie niet naar een bron?).
+ * Nooit gebruiken als terugval voor een instelling die nodig is.
+ */
+function config_getOptioneel_(sleutel) {
+  if (!Object.prototype.hasOwnProperty.call(CONFIG_SLEUTELS, sleutel)) {
+    throw new Error('Onbekende instelling "' + sleutel + '".');
+  }
+  var waarde = PropertiesService.getScriptProperties().getProperty(sleutel);
+  return (waarde === null || waarde === undefined) ? '' : String(waarde).trim();
 }
 
 function config_bronBasedataId_() { return config_get_(CONFIG_SLEUTELS.BRON_BASEDATA_ID); }

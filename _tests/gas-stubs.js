@@ -17,6 +17,11 @@
  *   __maakMap(id) / __maakBestand(id, naam)     Drive-objecten
  *   __laatKopierenFalen(bestandId)              volgende makeCopy van dit bestand faalt
  *   __schrijfpogingenNaarBron()                 aantal geweigerde schrijfpogingen
+ *   __formatenVan(id, tab)                      lijst met setNumberFormat-aanroepen op dat tabblad
+ *
+ * SHEETS-GEDRAG (T001c): net als in Google Sheets wordt een tekst die op een datum of een getal
+ * lijkt bij setValues/setValue omgezet naar een echte datum of een getal, tenzij de cel eerst het
+ * formaat '@' (platte tekst) heeft gekregen via setNumberFormat('@'). appendRow wordt niet omgezet.
  */
 
 var __state;
@@ -46,7 +51,8 @@ function __bronFout(id, actie) {
 
 function __maakSpreadsheet(id, tabbladen, opties) {
   var ss = { id: id, alleenLezen: !!(opties && opties.alleenLezen), tabs: {},
-             tijdzone: (opties && opties.tijdzone) || 'America/Paramaribo' };
+             tijdzone: (opties && opties.tijdzone) || 'America/Paramaribo',
+             tekstCellen: {}, formaten: [] };
   Object.keys(tabbladen || {}).forEach(function (naam) {
     ss.tabs[naam] = tabbladen[naam].map(function (r) { return r.slice(); });
   });
@@ -62,6 +68,12 @@ function __leesTabblad(id, naam) {
 
 function __schrijfpogingenNaarBron() { return __state.bronSchrijfpogingen; }
 
+function __formatenVan(id, naam) {
+  var ss = __state.spreadsheets[id];
+  if (!ss) throw new Error('Onbekende spreadsheet ' + id);
+  return ss.formaten.filter(function (f) { return f.tab === naam; }).map(function (f) { return Object.assign({}, f); });
+}
+
 function __breedte(data) {
   return data.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
 }
@@ -69,7 +81,25 @@ function __breedte(data) {
 function __maakRange(ss, naam, rij, kol, aantalRijen, aantalKol) {
   function data() { return ss.tabs[naam]; }
   function schrijfCheck(actie) { if (ss.alleenLezen) __bronFout(ss.id, actie); }
+  function celSleutel(r, c) { return naam + '|' + r + '|' + c; }
+  function zoalsSheetsHetLeest(r, c, v) {
+    if (typeof v !== 'string') return v;
+    if (ss.tekstCellen[celSleutel(r, c)]) return v;
+    if (/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/.test(v)) {
+      return new Date(v.length === 10 ? v + 'T00:00:00' : v.replace(' ', 'T'));
+    }
+    if (/^-?\d+(\.\d+)?$/.test(v)) return Number(v);
+    return v;
+  }
   return {
+    setNumberFormat: function (formaat) {
+      schrijfCheck('setNumberFormat');
+      ss.formaten.push({ tab: naam, rij: rij, kol: kol, aantalRijen: aantalRijen, aantalKol: aantalKol, formaat: formaat });
+      if (formaat === '@') {
+        for (var r = 0; r < aantalRijen; r++) for (var c = 0; c < aantalKol; c++) ss.tekstCellen[celSleutel(rij + r, kol + c)] = true;
+      }
+      return this;
+    },
     getValues: function () {
       var uit = [];
       for (var r = 0; r < aantalRijen; r++) {
@@ -94,14 +124,14 @@ function __maakRange(ss, naam, rij, kol, aantalRijen, aantalKol) {
       }
       for (var r = 0; r < aantalRijen; r++) {
         var doel = data()[rij - 1 + r] || (data()[rij - 1 + r] = []);
-        for (var c = 0; c < aantalKol; c++) doel[kol - 1 + c] = waarden[r][c];
+        for (var c = 0; c < aantalKol; c++) doel[kol - 1 + c] = zoalsSheetsHetLeest(rij + r, kol + c, waarden[r][c]);
       }
       return this;
     },
     setValue: function (w) {
       schrijfCheck('setValue');
       var doel = data()[rij - 1] || (data()[rij - 1] = []);
-      doel[kol - 1] = w;
+      doel[kol - 1] = zoalsSheetsHetLeest(rij, kol, w);
       return this;
     },
     clearContent: function () {

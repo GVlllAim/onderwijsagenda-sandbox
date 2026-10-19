@@ -31,7 +31,7 @@
  *  OPLEIDING_ZONDER_KLASSEN waarschuwing
  *
  * Wrapper voor jou (zonder parameters, te starten in de editor):
- *   genereerVerplichtingen_dryRun()   (schrijft niets)
+ *   genereerVerplichtingen_dryRun()   (schrijft niets; toont ook wat er in de registratie zou veranderen)
  */
 
 // ── Hulpfuncties ───────────────────────────────────────────────────────────────
@@ -324,8 +324,23 @@ function verplichtingen_leidAf_(basedata, selectie) {
 
 // ── Wrapper voor jou (zonder parameters) ───────────────────────────────────────
 
+/** Logt het aantal signaleringen per soort en de eerste 25 in detail. Alleen loggen. */
+function verplichtingen_logSignaleringen_(alle) {
+  var perType = {};
+  alle.forEach(function (x) {
+    var k = x.ernst + ' / ' + x.type;
+    perType[k] = (perType[k] || 0) + 1;
+  });
+  Logger.log('Signaleringen: ' + alle.length);
+  Object.keys(perType).sort(verplichtingen_vergelijk_).forEach(function (k) { Logger.log('  ' + k + ': ' + perType[k]); });
+  alle.slice(0, 25).forEach(function (x) {
+    Logger.log('  [' + x.ernst + '] ' + x.type + ' | ' + x.bronregel + ' | ' + x.tekst);
+  });
+  if (alle.length > 25) Logger.log('  ... en ' + (alle.length - 25) + ' meer.');
+}
+
 /** Schrijft het resultaat van een run in het uitvoerlogboek. Alleen lezen en loggen. */
-function verplichtingen_logResultaat_(selectie, leesSignaleringen, uit) {
+function verplichtingen_logResultaat_(selectie, leesSignaleringen, uit, registratie, plan) {
   var s = uit.samenvatting;
   Logger.log('DRY-RUN verwachte onderwijsagenda\'s: er is niets geschreven.');
   Logger.log('Selectie: academisch jaar ' + s.academischjaarId + ', opleiding ' + (s.alleOpleidingen ? 'ALLE' : s.opleidingId));
@@ -339,17 +354,22 @@ function verplichtingen_logResultaat_(selectie, leesSignaleringen, uit) {
   Logger.log('Totaal verplichtingen: ' + s.totaalVerplichtingen);
 
   var alle = leesSignaleringen.concat(uit.signaleringen);
-  var perType = {};
-  alle.forEach(function (x) {
-    var k = x.ernst + ' / ' + x.type;
-    perType[k] = (perType[k] || 0) + 1;
-  });
-  Logger.log('Signaleringen: ' + alle.length);
-  Object.keys(perType).sort(verplichtingen_vergelijk_).forEach(function (k) { Logger.log('  ' + k + ': ' + perType[k]); });
-  alle.slice(0, 25).forEach(function (x) {
-    Logger.log('  [' + x.ernst + '] ' + x.type + ' | ' + x.bronregel + ' | ' + x.tekst);
-  });
-  if (alle.length > 25) Logger.log('  ... en ' + (alle.length - 25) + ' meer.');
+  if (registratie && plan) {
+    Logger.log('Registratie (alleen gelezen): ' + registratie.rijen.length + ' rijen gelezen.');
+    Logger.log('  Nieuw: ' + plan.nieuw.length + ' | bijwerken: ' + plan.bijwerken.length +
+      ' | ongewijzigd: ' + plan.ongewijzigd.length + ' | vervallen: ' + plan.vervallen.length +
+      ' | overgeslagen: ' + plan.overgeslagen.length);
+    if (plan.nieuw.length > 0) {
+      Logger.log('  Nieuwe ID\'s zouden zijn: ' + registratie_formatteerId_(registratie.maxNummer + 1) +
+        ' t/m ' + registratie_formatteerId_(registratie.maxNummer + plan.nieuw.length));
+    }
+    plan.bijwerken.slice(0, 10).forEach(function (b) {
+      Logger.log('  Bijwerken ' + b.rij.verplichting_id + ' | ' + b.rij.sleutel + ' | lespakket ' + b.oud.lespakket_id +
+        ' wordt ' + b.wijzigingen.lespakket_id);
+    });
+    alle = alle.concat(registratie.signaleringen, plan.signaleringen);
+  }
+  verplichtingen_logSignaleringen_(alle);
 
   Logger.log('Voorbeeld (eerste 10 verplichtingen):');
   uit.verplichtingen.slice(0, 10).forEach(function (v) { Logger.log('  ' + v.sleutel); });
@@ -358,11 +378,14 @@ function verplichtingen_logResultaat_(selectie, leesSignaleringen, uit) {
 /**
  * Leidt de verwachte onderwijsagenda's af voor de selectie in Script Properties
  * (GENEREER_ACADEMISCHJAAR_ID en GENEREER_OPLEIDING_ID) en toont het resultaat
- * in het uitvoerlogboek. Schrijft NIETS: geen bron, geen registratie.
+ * in het uitvoerlogboek, samen met wat er in de registratie zou veranderen (nieuw, bijwerken,
+ * ongewijzigd, vervallen). Schrijft NIETS: geen bron, geen registratie.
  */
 function genereerVerplichtingen_dryRun() {
   var selectie = config_genereerSelectie_();
   var basedata = bron_leesBasedata_();
   var uit = verplichtingen_leidAf_(basedata, selectie);
-  verplichtingen_logResultaat_(selectie, basedata.signaleringen, uit);
+  var registratie = registratie_lees_();
+  var plan = registratie_plan_(uit.verplichtingen, registratie, selectie);
+  verplichtingen_logResultaat_(selectie, basedata.signaleringen, uit, registratie, plan);
 }

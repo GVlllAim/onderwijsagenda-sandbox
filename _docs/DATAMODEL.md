@@ -1,6 +1,6 @@
 # DATAMODEL: Onderwijsagenda-app
 
-*Versie T001b, 16-10-2026. Wordt bijgewerkt bij elke schemawijziging.*
+*Versie T001c deel 2, 18-10-2026. Wordt bijgewerkt bij elke schemawijziging.*
 
 Dit document zegt welke tabellen en kolommen de app gebruikt, wie eigenaar is, en in welk formaat gegevens staan of geschreven worden.
 De feiten over de bron zijn gecontroleerd op de PO-kopie `gs_basedata v2.xlsx` (Drive-map "Codebase Skooro 20261014", 14-10-2026). Jouw sandbox-kopie kan afwijken: draai `controleerBronBasedata()` en vergelijk.
@@ -95,17 +95,75 @@ Het contract staat in code als `BRON_BASEDATA_CONTRACT` (`Bron_Lezen.js`). Allee
 | `bronregel` | bijv. `gs_basedata/klassen rij 12` |
 | `tekst` | uitleg in gewone taal |
 
-## 5. Registratie-spreadsheet (nog niet aangemaakt)
+## 5. Registratie-spreadsheet (tabblad `verplichtingen`)
 
-Tabblad `verplichtingen` volgens besluit PB-5 (14-10-2026). Het tabblad en de kolommen maak je met de hand; de exacte CSV-regel en de notatie per kolom worden in T001c vastgesteld. Er is **geen** docentkolom: de docent komt in T001d in een aparte koppeltabel waarin alleen regels worden toegevoegd.
+De registratie-spreadsheet is van deze app (lezen en schrijven). Het tabblad `verplichtingen` is met de hand aangemaakt (kant-en-klaar kopbestand, besluit B11) en heeft geen docentkolom: de docent komt in T001d in een aparte koppeltabel waarin alleen regels worden toegevoegd. De ID van de spreadsheet staat in Script Properties (`REGISTRATIE_ID`) en in `CONTEXT.md`.
 
-Kolommen, in volgorde:
+### Kolomcontract (naam en volgorde moeten exact kloppen, anders stopt de code)
 
-`verplichting_id`, `sleutel`, `academischjaar_id`, `trimester_id`, `opleiding_id`, `onderwijs_eenheid_id`, `klas_id`, `lespakket_id`, `status`, `aangemaakt_op`, `aangemaakt_door`, `bijgewerkt_op`, `bijgewerkt_door`
+| # | Kolom | Inhoud en notatie (PB-13) | Verplicht |
+|---|---|---|---|
+| 1 | `verplichting_id` | `VPL-0001`; minimaal 4 cijfers, groeit mee (`VPL-10000`); via één centrale functie (PB-14: hoogste nummer + 1) | ja |
+| 2 | `sleutel` | jaar, trimester, opleiding, vak, klas, gescheiden door `\|`; moet overeenkomen met kolommen 3 t/m 7 (PB-12) | ja, uniek |
+| 3 | `academischjaar_id` | bron-ID, hoofdletters, bijv. `ACJ-007` | ja |
+| 4 | `trimester_id` | bron-ID, hoofdletters | ja |
+| 5 | `opleiding_id` | bron-ID, hoofdletters | ja |
+| 6 | `onderwijs_eenheid_id` | bron-ID, hoofdletters | ja |
+| 7 | `klas_id` | bron-ID, hoofdletters, bijv. `KLA-ACJ-007-PT1.06.01` | ja |
+| 8 | `lespakket_id` | bron-ID, hoofdletters. Het enige veld dat later wordt bijgewerkt (PB-15) | ja |
+| 9 | `status` | tekst uit één lijst met constanten; eerste waarde `Verwacht` | ja |
+| 10 | `aangemaakt_op` | tekst `yyyy-MM-dd HH:mm:ss`, tijd in Paramaribo | ja |
+| 11 | `aangemaakt_door` | e-mailadres van de gebruiker; stopt als dat niet beschikbaar is | ja |
+| 12 | `bijgewerkt_op` | zelfde formaat als `aangemaakt_op` | ja |
+| 13 | `bijgewerkt_door` | zelfde als `aangemaakt_door` | ja |
 
-- ID-formaat: `VPL-0001`, `VPL-0002`, ... via een centrale functie (PB-4).
-- Geen dubbele verplichtingen via de natuurlijke sleutel (jaar + trimester + opleiding + vak + klas), niet via het ID. Notatie van de sleutel (PB-12): de delen in die volgorde, gescheiden door `|`, bijvoorbeeld `ACJ-007|TRI-025|OPL-001|OE-001|KLA-ACJ-007-PT1.06.01`.
-- Statusnamen staan als constanten op één plek. De eerste status is `Verwacht`; de overgangsmatrix volgt in een latere taak.
+Alle kolommen worden als tekst (`@`) geschreven, zodat Sheets niets omzet naar een datum of getal. Een bestaande rij krijgt nooit een nieuwe `aangemaakt_op` of `aangemaakt_door`.
+
+### Regels bij het lezen en plannen (`Registratie_Verplichtingen.js`)
+
+- De registratie mag nooit dezelfde spreadsheet zijn als een bron (`BRON_BASEDATA_ID`, `BRON_DOCENTENBEHEER_ID`). Anders stopt de code.
+- Ontbrekend tabblad, ontbrekende of verwisselde kolom, extra kolom buiten het contract: de code stopt met een duidelijke fout (PB-16, structuurprobleem).
+- Elke rij wordt gecontroleerd. Een rij met een probleem is **geblokkeerd**: ze wordt niet aangepast en niet overschreven en de bijbehorende verplichting wordt overgeslagen. Er ontstaat nooit een dubbele rij (PB-16).
+- ID's en sleutel worden bij het lezen genormaliseerd (trim, hoofdletters); een afwijking wordt als info gemeld.
+- Plannen vergelijkt de afgeleide verplichtingen met de registratie op `sleutel` en geeft: **nieuw**, **bijwerken** (alleen `lespakket_id` verschilt), **ongewijzigd**, **vervallen** en **overgeslagen**.
+- Vervallen = staat in de registratie voor het gekozen jaar en de gekozen opleiding(en), maar wordt niet meer afgeleid. De verplichting en haar status blijven ongewijzigd en worden gemeld (B12).
+
+### Signaleringen van de registratie
+
+| Type | Ernst | Betekenis |
+|---|---|---|
+| `ONGELDIG_ID_REGISTRATIE` | fout | `verplichting_id` heeft niet het formaat `VPL-0001`; rij geblokkeerd |
+| `SLEUTEL_INCONSISTENT_REGISTRATIE` | fout | `sleutel` komt niet overeen met jaar, trimester, opleiding, vak en klas in dezelfde rij; rij geblokkeerd |
+| `DUBBELE_SLEUTEL_REGISTRATIE` | fout | dezelfde sleutel in twee rijen; beide geblokkeerd |
+| `DUBBEL_ID_REGISTRATIE` | fout | hetzelfde `verplichting_id` in twee rijen; beide geblokkeerd |
+| `STATUS_ONBEKEND_REGISTRATIE` | waarschuwing | status staat niet in de lijst met bekende statussen; rij niet geblokkeerd |
+| `BRON_VERVALLEN` | waarschuwing | verplichting wordt niet meer afgeleid; blijft staan |
+| `TIJDZONE_AFWIJKEND` | waarschuwing | tijdzone van de registratie is niet `America/Paramaribo` |
+| `ID_GENORMALISEERD` | info | spelling van een ID in de registratie is genormaliseerd |
+
+### Schrijven (T001c deel 2)
+
+Alleen `registratie_saveVerplichtingen_()` schrijft naar dit tabblad (de enige schrijfpoort). De wrapper `genereerVerplichtingen_uitvoeren()` roept hem aan. Alleen de scripteigenaar, vanuit de editor (B14); er is geen webingang.
+
+Volgorde van een uitvoering:
+
+1. Selectie lezen en bron lezen en afleiden (alleen rekenen), vóór de lock.
+2. E-mailadres van de gebruiker ophalen. Ontbreekt het, dan stopt de run vóór de lock (PB-13).
+3. De lock nemen (maximaal 30 seconden wachten). Lukt dat niet, dan stopt de run en is er niets geschreven.
+4. Binnen de lock de registratie **opnieuw** lezen en plannen. Zo ziet een tweede run of een dubbele klik wat de eerste schreef en schrijft niets dubbel.
+5. Een tijdzone van de registratie die niet `America/Paramaribo` is stopt de run (PB-16).
+6. De schrijfpoort: alle nieuwe en bij te werken records worden eerst tegen het kolomcontract gecontroleerd. Is er één probleem, dan wordt niets geschreven. Daarna:
+   - **Bijwerken (samenvoegen, PB-15):** alleen `lespakket_id`, `bijgewerkt_op` en `bijgewerkt_door`. `aangemaakt_op`, `aangemaakt_door` en alle andere kolommen blijven staan. Een onveranderde rij wordt niet aangeraakt.
+   - **Nieuw:** ID's van hoogste bestaande nummer + 1 (PB-14), in blokken van 200 rijen. Eerst wordt het tekstformaat (`@`) op het blok gezet, dan geschreven, dan teruggelezen en vergeleken met wat er geschreven is.
+7. De lock wordt altijd vrijgegeven, ook bij een fout.
+
+Een nummer wordt door de app nooit opnieuw gebruikt. Rijen worden door de app nooit verwijderd.
+
+Mislukt het schrijven halverwege, dan blijft wat al geschreven is staan (er wordt niets teruggedraaid) en de foutmelding noemt hoeveel er klaar is. Opnieuw uitvoeren vult de rest aan, zonder dubbelen.
+
+Wat een uitvoering **niet** doet: een rij met een probleem (geblokkeerd) aanpassen of overschrijven; een vervallen verplichting wijzigen of verwijderen; iets in een bron schrijven.
+
+Uitvoerlogboek van een run: selectie, aantal afgeleid, rijen voor en na, aantal nieuw (met eerste en laatste ID), bijgewerkt, ongewijzigd, vervallen en overgeslagen, en de signaleringen.
 
 ## 6. Afleiden van verwachte agenda's (T001b, `Verplichtingen_Afleiden.js`)
 

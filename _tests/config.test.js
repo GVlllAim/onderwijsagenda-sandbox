@@ -59,3 +59,10 @@ test('controleerInstellingen toont de status en lekt nooit een waarde', function
   assert.ok(/Ontbrekend \(nu nodig\): GENEREER_ACADEMISCHJAAR_ID/.test(log));
   assert.ok(log.indexOf('GEHEIM-ID-123') === -1, 'de waarde zelf staat niet in het log');
 });
+
+test('config_getOptioneel_ geeft een lege tekst bij een ontbrekende instelling en gooit geen fout', function () {
+  assert.strictEqual(config_getOptioneel_('BRON_DOCENTENBEHEER_ID'), '');
+  __zetProperties({ BRON_DOCENTENBEHEER_ID: '  XYZ  ' });
+  assert.strictEqual(config_getOptioneel_('BRON_DOCENTENBEHEER_ID'), 'XYZ');
+  assert.throws(function () { config_getOptioneel_('ONBEKEND'); }, /Onbekende instelling/);
+});

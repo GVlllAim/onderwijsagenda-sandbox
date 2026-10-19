@@ -376,17 +376,34 @@ test('lege tabbladen geven geen crash maar waarschuwingen', function () {
 
 // ── Dry-run wrapper ────────────────────────────────────────────────────────────
 
+var VB_REG_ID = 'REGISTRATIE_VB';
+
+/** Maakt een registratie met alleen de kopregel (zoals de echte, nog lege registratie). */
+function vb_maakRegistratie(extraRijen) {
+  var kop = ['verplichting_id', 'sleutel', 'academischjaar_id', 'trimester_id', 'opleiding_id', 'onderwijs_eenheid_id',
+    'klas_id', 'lespakket_id', 'status', 'aangemaakt_op', 'aangemaakt_door', 'bijgewerkt_op', 'bijgewerkt_door'];
+  __maakSpreadsheet(VB_REG_ID, { verplichtingen: [kop].concat(extraRijen || []) }, {});
+}
+
 test('de dry-run toont samenvatting en signaleringen en schrijft niets', function () {
   var tabs = vb_tabs();
   __maakSpreadsheet(VB_BRON_ID, tabs, { alleenLezen: true });
-  __zetProperties({ BRON_BASEDATA_ID: VB_BRON_ID, GENEREER_ACADEMISCHJAAR_ID: 'ACJ-007', GENEREER_OPLEIDING_ID: 'ALLE' });
+  vb_maakRegistratie();
+  __zetProperties({ BRON_BASEDATA_ID: VB_BRON_ID, REGISTRATIE_ID: VB_REG_ID,
+    GENEREER_ACADEMISCHJAAR_ID: 'ACJ-007', GENEREER_OPLEIDING_ID: 'ALLE' });
   var namen = Object.keys(tabs);
   var voor = JSON.stringify(namen.map(function (n) { return __leesTabblad(VB_BRON_ID, n); }));
+  var regVoor = JSON.stringify(__leesTabblad(VB_REG_ID, 'verplichtingen'));
 
   genereerVerplichtingen_dryRun();
 
   var na = JSON.stringify(namen.map(function (n) { return __leesTabblad(VB_BRON_ID, n); }));
+  var regNa = JSON.stringify(__leesTabblad(VB_REG_ID, 'verplichtingen'));
   var log = __state.log.join('\n');
+  assert.ok(/Registratie \(alleen gelezen\): 0 rijen gelezen/.test(log));
+  assert.ok(/Nieuw: 8 \| bijwerken: 0 \| ongewijzigd: 0 \| vervallen: 0 \| overgeslagen: 0/.test(log));
+  assert.ok(/Nieuwe ID's zouden zijn: VPL-0001 t\/m VPL-0008/.test(log));
+  assert.strictEqual(regNa, regVoor, 'de registratie is ongewijzigd');
   assert.ok(/DRY-RUN.*er is niets geschreven/.test(log));
   assert.ok(/Selectie: academisch jaar ACJ-007, opleiding ALLE/.test(log));
   assert.ok(/OPL-001: klassen 2, verplichtingen 6/.test(log));
@@ -397,8 +414,277 @@ test('de dry-run toont samenvatting en signaleringen en schrijft niets', functio
   assert.strictEqual(na, voor, 'de bron is ongewijzigd');
 });
 
+test('de dry-run toont een bestaande registratie: ongewijzigd, bijwerken en vervallen', function () {
+  __maakSpreadsheet(VB_BRON_ID, vb_tabs(), { alleenLezen: true });
+  var rij = function (nr, klas, trimester, oe, opl, lpk) {
+    return [nr, 'ACJ-007|' + trimester + '|' + opl + '|' + oe + '|' + klas, 'ACJ-007', trimester, opl, oe, klas, lpk,
+      'Verwacht', '2026-10-18 10:00:00', 'a@b.c', '2026-10-18 10:00:00', 'a@b.c'];
+  };
+  vb_maakRegistratie([
+    rij('VPL-0001', 'KLA-001', 'TRI-001', 'OE-001', 'OPL-001', 'LPK-001'),   // gelijk aan de afleiding
+    rij('VPL-0002', 'KLA-001', 'TRI-001', 'OE-002', 'OPL-001', 'LPK-099'),   // lespakket wijkt af
+    rij('VPL-0003', 'KLA-777', 'TRI-001', 'OE-001', 'OPL-001', 'LPK-001')    // klas bestaat niet meer
+  ]);
+  __zetProperties({ BRON_BASEDATA_ID: VB_BRON_ID, REGISTRATIE_ID: VB_REG_ID,
+    GENEREER_ACADEMISCHJAAR_ID: 'ACJ-007', GENEREER_OPLEIDING_ID: 'ALLE' });
+  genereerVerplichtingen_dryRun();
+  var log = __state.log.join('\n');
+  assert.ok(/Nieuw: 6 \| bijwerken: 1 \| ongewijzigd: 1 \| vervallen: 1 \| overgeslagen: 0/.test(log));
+  assert.ok(/Nieuwe ID's zouden zijn: VPL-0004 t\/m VPL-0009/.test(log));
+  assert.ok(/Bijwerken VPL-0002 .* lespakket LPK-099 wordt LPK-001/.test(log));
+  assert.ok(/waarschuwing \/ BRON_VERVALLEN: 1/.test(log));
+});
+
+test('de dry-run stopt met een duidelijke fout als de registratie ontbreekt (geen stille terugval)', function () {
+  __maakSpreadsheet(VB_BRON_ID, vb_tabs(), { alleenLezen: true });
+  __zetProperties({ BRON_BASEDATA_ID: VB_BRON_ID, GENEREER_ACADEMISCHJAAR_ID: 'ACJ-007', GENEREER_OPLEIDING_ID: 'ALLE' });
+  assert.throws(function () { genereerVerplichtingen_dryRun(); }, /Instelling "REGISTRATIE_ID" ontbreekt/);
+});
+
 test('de dry-run stopt met een duidelijke fout als de selectie ontbreekt (geen standaardjaar)', function () {
   __maakSpreadsheet(VB_BRON_ID, vb_tabs(), { alleenLezen: true });
   __zetProperties({ BRON_BASEDATA_ID: VB_BRON_ID, GENEREER_OPLEIDING_ID: 'ALLE' });
   assert.throws(function () { genereerVerplichtingen_dryRun(); }, /GENEREER_ACADEMISCHJAAR_ID/);
+});
+
+// ══ T001c deel 2: genereerVerplichtingen_uitvoeren ════════════════════════════
+
+function vb_opzetUitvoeren(opleiding, regRijen, tabsAanpassing, regOpties) {
+  var tabs = vb_tabs();
+  if (tabsAanpassing) tabsAanpassing(tabs);
+  __maakSpreadsheet(VB_BRON_ID, tabs, { alleenLezen: true });
+  var kop = ['verplichting_id', 'sleutel', 'academischjaar_id', 'trimester_id', 'opleiding_id', 'onderwijs_eenheid_id',
+    'klas_id', 'lespakket_id', 'status', 'aangemaakt_op', 'aangemaakt_door', 'bijgewerkt_op', 'bijgewerkt_door'];
+  __maakSpreadsheet(VB_REG_ID, { verplichtingen: [kop].concat(regRijen || []) }, regOpties || {});
+  __zetProperties({ BRON_BASEDATA_ID: VB_BRON_ID, REGISTRATIE_ID: VB_REG_ID,
+    GENEREER_ACADEMISCHJAAR_ID: 'ACJ-007', GENEREER_OPLEIDING_ID: opleiding || 'ALLE' });
+  __zetGebruiker('coder@sandbox.local');
+}
+
+function vb_regTab() { return __leesTabblad(VB_REG_ID, 'verplichtingen'); }
+
+/** Vervangt de lock door een spy. `gelukt` bepaalt of tryLock slaagt. Geeft { tel, herstel }. */
+function vb_spyLock(gelukt) {
+  var origineel = LockService.getScriptLock;
+  var tel = { tryLock: 0, releaseLock: 0 };
+  LockService.getScriptLock = function () {
+    return {
+      tryLock: function () { tel.tryLock++; return gelukt !== false; },
+      releaseLock: function () { tel.releaseLock++; }
+    };
+  };
+  return { tel: tel, herstel: function () { LockService.getScriptLock = origineel; } };
+}
+
+function vb_rijTekst(nr, klas, trimester, oe, opl, lpk) {
+  return [nr, 'ACJ-007|' + trimester + '|' + opl + '|' + oe + '|' + klas, 'ACJ-007', trimester, opl, oe, klas, lpk,
+    'Verwacht', '2026-10-18 10:00:00', 'a@b.c', '2026-10-18 10:00:00', 'a@b.c'];
+}
+
+test('uitvoeren: de eerste run schrijft alle 8 verplichtingen met ID\'s, als tekst, zonder iets in de bron te schrijven', function () {
+  vb_opzetUitvoeren();
+  genereerVerplichtingen_uitvoeren();
+  var tab = vb_regTab();
+  assert.strictEqual(tab.length, 9);
+  var sleutels = tab.slice(1).map(function (r) { return r[1]; });
+  assert.deepStrictEqual(sleutels, VB_VERWACHT_HOOFD);
+  assert.deepStrictEqual(tab.slice(1).map(function (r) { return r[0]; }),
+    ['VPL-0001', 'VPL-0002', 'VPL-0003', 'VPL-0004', 'VPL-0005', 'VPL-0006', 'VPL-0007', 'VPL-0008']);
+  assert.ok(tab.every(function (r) { return r.every(function (c) { return typeof c === 'string'; }); }), 'alles is tekst');
+  assert.strictEqual(tab[1][8], 'Verwacht');
+  assert.strictEqual(tab[1][10], 'coder@sandbox.local');
+  assert.ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(tab[1][9]));
+  assert.strictEqual(tab[1][9], tab[1][11], 'aangemaakt_op en bijgewerkt_op zijn bij het aanmaken gelijk');
+  assert.strictEqual(__schrijfpogingenNaarBron(), 0);
+  var log = __state.log.join('\n');
+  assert.ok(/UITVOEREN verwachte onderwijsagenda's/.test(log));
+  assert.ok(/Geschreven: nieuw 8 \(VPL-0001 t\/m VPL-0008\), bijgewerkt 0/.test(log));
+  assert.ok(/Registratie na de run: 8 rijen/.test(log));
+});
+
+test('uitvoeren: een tweede run schrijft niets en laat de registratie ongewijzigd (idempotent)', function () {
+  vb_opzetUitvoeren();
+  genereerVerplichtingen_uitvoeren();
+  var na1 = JSON.stringify(vb_regTab());
+  __state.log.length = 0;
+  genereerVerplichtingen_uitvoeren();
+  assert.strictEqual(JSON.stringify(vb_regTab()), na1);
+  var log = __state.log.join('\n');
+  assert.ok(/Geschreven: nieuw 0, bijgewerkt 0/.test(log));
+  assert.ok(/ongewijzigd 8/.test(log));
+});
+
+test('uitvoeren: een dubbele klik (twee runs achter elkaar) maakt geen dubbelen en geeft de lock vrij', function () {
+  vb_opzetUitvoeren();
+  var spy = vb_spyLock(true);
+  try {
+    genereerVerplichtingen_uitvoeren();
+    genereerVerplichtingen_uitvoeren();
+  } finally { spy.herstel(); }
+  var sleutels = vb_regTab().slice(1).map(function (r) { return r[1]; });
+  assert.strictEqual(sleutels.length, 8);
+  assert.strictEqual(new Set(sleutels).size, 8);
+  assert.strictEqual(spy.tel.tryLock, 2);
+  assert.strictEqual(spy.tel.releaseLock, 2);
+});
+
+test('uitvoeren: wordt de lock niet verkregen, dan stopt de run met een duidelijke fout en wordt niets geschreven', function () {
+  vb_opzetUitvoeren();
+  var spy = vb_spyLock(false);
+  try {
+    assert.throws(function () { genereerVerplichtingen_uitvoeren(); }, /de lock is niet verkregen binnen 30 seconden.*niets geschreven/);
+  } finally { spy.herstel(); }
+  assert.strictEqual(vb_regTab().length, 1);
+  assert.strictEqual(spy.tel.releaseLock, 0, 'een lock die je niet hebt, geef je niet vrij');
+});
+
+test('uitvoeren: de lock wordt ook vrijgegeven als er binnen de lock iets misgaat', function () {
+  vb_opzetUitvoeren();
+  var spy = vb_spyLock(true);
+  // de kopregel wordt pas binnen de lock gelezen: een kapotte kop laat de run daar stoppen
+  var sheet = SpreadsheetApp.openById(VB_REG_ID).getSheetByName('verplichtingen');
+  sheet.getRange(1, 3).setValue('jaar_id');
+  try {
+    assert.throws(function () { genereerVerplichtingen_uitvoeren(); }, /Kolomcontract/);
+  } finally { spy.herstel(); }
+  assert.strictEqual(spy.tel.tryLock, 1);
+  assert.strictEqual(spy.tel.releaseLock, 1);
+});
+
+test('uitvoeren: een registratie met een andere tijdzone dan Paramaribo stopt de run (PB-16)', function () {
+  vb_opzetUitvoeren(null, [], null, { tijdzone: 'America/Los_Angeles' });
+  var spy = vb_spyLock(true);
+  try {
+    assert.throws(function () { genereerVerplichtingen_uitvoeren(); }, /tijdzone van de registratie is niet America\/Paramaribo.*niets geschreven/);
+  } finally { spy.herstel(); }
+  assert.strictEqual(vb_regTab().length, 1);
+  assert.strictEqual(spy.tel.releaseLock, 1);
+});
+
+test('uitvoeren: zonder e-mailadres stopt de run vóór de lock en wordt niets geschreven', function () {
+  vb_opzetUitvoeren();
+  __zetGebruiker('');
+  var spy = vb_spyLock(true);
+  try {
+    assert.throws(function () { genereerVerplichtingen_uitvoeren(); }, /e-mailadres van de gebruiker is niet beschikbaar/);
+  } finally { spy.herstel(); }
+  assert.strictEqual(spy.tel.tryLock, 0);
+  assert.strictEqual(vb_regTab().length, 1);
+});
+
+test('uitvoeren: eerst OPL-001, daarna ALLE: alleen de nieuwe verplichtingen komen erbij met doorlopende ID\'s', function () {
+  vb_opzetUitvoeren('OPL-001');
+  genereerVerplichtingen_uitvoeren();
+  assert.strictEqual(vb_regTab().length, 7, '6 verplichtingen voor OPL-001');
+  __zetProperties({ GENEREER_OPLEIDING_ID: 'ALLE' });
+  __state.log.length = 0;
+  genereerVerplichtingen_uitvoeren();
+  var tab = vb_regTab();
+  assert.strictEqual(tab.length, 9);
+  assert.deepStrictEqual([tab[7][0], tab[8][0]], ['VPL-0007', 'VPL-0008']);
+  assert.ok(/Geschreven: nieuw 2 \(VPL-0007 t\/m VPL-0008\)/.test(__state.log.join('\n')));
+  assert.ok(/ongewijzigd 6/.test(__state.log.join('\n')));
+  var sleutels = tab.slice(1).map(function (r) { return r[1]; });
+  assert.strictEqual(new Set(sleutels).size, 8);
+});
+
+test('uitvoeren: een gewijzigd lespakket wordt bijgewerkt (samengevoegd); aangemaakt_op en andere rijen blijven', function () {
+  vb_opzetUitvoeren();
+  genereerVerplichtingen_uitvoeren();
+  var voor = vb_regTab();
+  SpreadsheetApp.openById(VB_REG_ID).getSheetByName('verplichtingen').getRange(2, 8).setValue('LPK-099');
+  __state.log.length = 0;
+  genereerVerplichtingen_uitvoeren();
+  var na = vb_regTab();
+  assert.strictEqual(na[1][7], 'LPK-001');
+  assert.strictEqual(na[1][9], voor[1][9], 'aangemaakt_op blijft');
+  assert.strictEqual(na[1][10], voor[1][10], 'aangemaakt_door blijft');
+  assert.strictEqual(na[1][12], 'coder@sandbox.local');
+  for (var i = 2; i < na.length; i++) assert.deepStrictEqual(na[i], voor[i], 'rij ' + (i + 1) + ' is niet aangeraakt');
+  assert.ok(/bijgewerkt 1/.test(__state.log.join('\n')));
+  assert.ok(/Bijgewerkt VPL-0001 .* lespakket LPK-099 is LPK-001/.test(__state.log.join('\n')));
+});
+
+test('uitvoeren: een vervallen verplichting blijft staan met haar status en wordt gemeld', function () {
+  var vervallen = vb_rijTekst('VPL-0001', 'KLA-777', 'TRI-001', 'OE-001', 'OPL-001', 'LPK-001');
+  vervallen[8] = 'Verwacht';
+  vb_opzetUitvoeren(null, [vervallen]);
+  genereerVerplichtingen_uitvoeren();
+  var tab = vb_regTab();
+  assert.deepStrictEqual(tab[1], vervallen, 'de vervallen rij is onaangeroerd');
+  assert.strictEqual(tab.length, 10, '8 nieuwe rijen erbij');
+  assert.strictEqual(tab[2][0], 'VPL-0002', 'de nummering gaat na VPL-0001 verder');
+  var log = __state.log.join('\n');
+  assert.ok(/vervallen 1/.test(log));
+  assert.ok(/waarschuwing \/ BRON_VERVALLEN: 1/.test(log));
+});
+
+test('uitvoeren: een rij met een probleem (dubbele sleutel) blijft ongemoeid; de rest gaat door (PB-16)', function () {
+  var a = vb_rijTekst('VPL-0001', 'KLA-001', 'TRI-001', 'OE-001', 'OPL-001', 'LPK-001');
+  var b = vb_rijTekst('VPL-0002', 'KLA-001', 'TRI-001', 'OE-001', 'OPL-001', 'LPK-001');
+  vb_opzetUitvoeren(null, [a, b]);
+  genereerVerplichtingen_uitvoeren();
+  var tab = vb_regTab();
+  assert.deepStrictEqual(tab[1], a);
+  assert.deepStrictEqual(tab[2], b);
+  assert.strictEqual(tab.length, 10, '2 oude rijen plus 7 nieuwe (de geblokkeerde sleutel wordt niet opnieuw aangemaakt)');
+  var sleutels = tab.slice(1).map(function (r) { return r[1]; });
+  assert.strictEqual(sleutels.filter(function (s) { return s === a[1]; }).length, 2, 'de sleutel komt niet vaker voor dan voorheen');
+  var log = __state.log.join('\n');
+  assert.ok(/overgeslagen 1/.test(log));
+  assert.ok(/fout \/ DUBBELE_SLEUTEL_REGISTRATIE: 1/.test(log));
+});
+
+test('uitvoeren: de registratie mag niet dezelfde spreadsheet zijn als een bron', function () {
+  vb_opzetUitvoeren();
+  __zetProperties({ REGISTRATIE_ID: VB_BRON_ID });
+  assert.throws(function () { genereerVerplichtingen_uitvoeren(); }, /dezelfde spreadsheet als BRON_BASEDATA_ID.*nooit een bron/);
+  assert.strictEqual(__schrijfpogingenNaarBron(), 0);
+});
+
+test('uitvoeren: een onbekend academisch jaar stopt vóór de lock en vóór elke schrijfactie', function () {
+  vb_opzetUitvoeren();
+  __zetProperties({ GENEREER_ACADEMISCHJAAR_ID: 'ACJ-099' });
+  var spy = vb_spyLock(true);
+  try {
+    assert.throws(function () { genereerVerplichtingen_uitvoeren(); }, /Academisch jaar "ACJ-099" bestaat niet/);
+  } finally { spy.herstel(); }
+  assert.strictEqual(spy.tel.tryLock, 0);
+  assert.strictEqual(vb_regTab().length, 1);
+});
+
+test('dry-run en uitvoeren zijn het eens: wat de dry-run als nieuw toont, schrijft uitvoeren', function () {
+  vb_opzetUitvoeren();
+  genereerVerplichtingen_dryRun();
+  assert.ok(/Nieuw: 8 \|/.test(__state.log.join('\n')));
+  assert.strictEqual(vb_regTab().length, 1, 'de dry-run schreef niets');
+  __state.log.length = 0;
+  genereerVerplichtingen_uitvoeren();
+  assert.strictEqual(vb_regTab().length, 9);
+  __state.log.length = 0;
+  genereerVerplichtingen_dryRun();
+  assert.ok(/Nieuw: 0 \| bijwerken: 0 \| ongewijzigd: 8 \|/.test(__state.log.join('\n')));
+});
+
+test('uitvoeren: wat een andere run schreef terwijl we op de lock wachtten wordt gezien (opnieuw gelezen binnen de lock)', function () {
+  vb_opzetUitvoeren();
+  var origineel = LockService.getScriptLock;
+  var hoeVaak = 0;
+  LockService.getScriptLock = function () {
+    return {
+      tryLock: function () {
+        hoeVaak++;
+        if (hoeVaak === 1) {
+          // Terwijl de eerste run op de lock wacht, voltooit een andere run zijn hele schrijfactie.
+          genereerVerplichtingen_uitvoeren();
+        }
+        return true;
+      },
+      releaseLock: function () {}
+    };
+  };
+  try { genereerVerplichtingen_uitvoeren(); } finally { LockService.getScriptLock = origineel; }
+  var sleutels = vb_regTab().slice(1).map(function (r) { return r[1]; });
+  assert.strictEqual(sleutels.length, 8, 'niet dubbel geschreven');
+  assert.strictEqual(new Set(sleutels).size, 8);
 });
